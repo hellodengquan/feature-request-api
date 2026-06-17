@@ -3,6 +3,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
+from app.models import PriorityLevel, FeedbackStatus
+
 
 class CustomerCreate(BaseModel):
     name: str
@@ -48,7 +50,7 @@ class TopicOut(BaseModel):
 
 
 class StatusChangeCreate(BaseModel):
-    new_status: str
+    new_status: FeedbackStatus
     changed_by: Optional[str] = ""
     remark: Optional[str] = ""
 
@@ -56,8 +58,8 @@ class StatusChangeCreate(BaseModel):
 class StatusChangeOut(BaseModel):
     id: int
     feedback_id: int
-    old_status: str
-    new_status: str
+    old_status: Optional[FeedbackStatus] = None
+    new_status: FeedbackStatus
     changed_by: Optional[str] = ""
     remark: Optional[str] = ""
     changed_at: datetime
@@ -69,7 +71,8 @@ class StatusChangeOut(BaseModel):
 class FeedbackCreate(BaseModel):
     description: str
     impact_scope: Optional[str] = ""
-    priority: Optional[str] = "medium"
+    priority: Optional[PriorityLevel] = PriorityLevel.MEDIUM
+    status: Optional[FeedbackStatus] = FeedbackStatus.PENDING
     source: Optional[str] = ""
     topic_id: Optional[int] = None
     customer_ids: Optional[List[int]] = []
@@ -78,18 +81,21 @@ class FeedbackCreate(BaseModel):
 class FeedbackUpdate(BaseModel):
     description: Optional[str] = None
     impact_scope: Optional[str] = None
-    priority: Optional[str] = None
+    priority: Optional[PriorityLevel] = None
+    status: Optional[FeedbackStatus] = None
     source: Optional[str] = None
     topic_id: Optional[int] = None
     customer_ids: Optional[List[int]] = None
+    changed_by: Optional[str] = ""
+    remark: Optional[str] = ""
 
 
 class FeedbackOut(BaseModel):
     id: int
     description: str
     impact_scope: Optional[str] = ""
-    priority: Optional[str] = "medium"
-    status: str
+    priority: PriorityLevel
+    status: FeedbackStatus
     source: Optional[str] = ""
     topic_id: Optional[int] = None
     created_at: datetime
@@ -105,8 +111,8 @@ class FeedbackListItem(BaseModel):
     id: int
     description: str
     impact_scope: Optional[str] = ""
-    priority: Optional[str] = "medium"
-    status: str
+    priority: PriorityLevel
+    status: FeedbackStatus
     source: Optional[str] = ""
     topic_id: Optional[int] = None
     created_at: datetime
@@ -119,6 +125,7 @@ class FeedbackListItem(BaseModel):
 class FeedbackGroupByTopic(BaseModel):
     topic: Optional[TopicOut] = None
     feedbacks: List[FeedbackListItem]
+    feedback_count: int = 0
 
 
 class PendingEvaluationReport(BaseModel):

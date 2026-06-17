@@ -1,12 +1,12 @@
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Feedback
+from app.models import Feedback, Topic, FeedbackStatus, PriorityLevel
 from app.schemas import FeedbackListItem, PendingEvaluationReport, FeedbackGroupByTopic, TopicOut
-from app.models import Topic
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -14,50 +14,81 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 @router.get("/pending-evaluation", response_model=PendingEvaluationReport)
 def pending_evaluation_report(
     source: Optional[str] = None,
-    priority: Optional[str] = None,
+    priority: Optional[PriorityLevel] = None,
+    created_from: Optional[datetime] = Query(None, description="创建时间起始（含），ISO 格式，如 2026-06-01T00:00:00"),
+    created_to: Optional[datetime] = Query(None, description="创建时间截止（含），ISO 格式，如 2026-06-30T23:59:59"),
+    skip: int = Query(0, ge=0, description="分页偏移"),
+    limit: int = Query(200, ge=1, le=2000, description="每页数量"),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Feedback).filter(Feedback.status == "pending")
+    query = db.query(Feedback).filter(Feedback.status == FeedbackStatus.PENDING)
     if source:
         query = query.filter(Feedback.source == source)
     if priority:
         query = query.filter(Feedback.priority == priority)
-    feedbacks = query.order_by(Feedback.created_at.asc()).all()
+    if created_from:
+        query = query.filter(Feedback.created_at >= created_from)
+    if created_to:
+        query = query.filter(Feedback.created_at <= created_to)
+    total = query.count()
+    feedbacks = query.order_by(Feedback.created_at.asc()).offset(skip).limit(limit).all()
     return PendingEvaluationReport(
-        total=len(feedbacks),
+        total=total,
         feedbacks=[FeedbackListItem.model_validate(f) for f in feedbacks],
     )
 
 
 @router.get("/pending-evaluation/by-topic", response_model=list)
-def pending_evaluation_grouped_by_topic(db: Session = Depends(get_db)):
-    topics = db.query(Topic).all()
+def pending_evaluation_grouped_by_topic(
+    created_from: Optional[datetime] = Query(None, description="创建时间起始（含）"),
+    created_to: Optional[datetime] = Query(None, description="创建时间截止（含）"),
+    topic_skip: int = Query(0, ge=0, description="主题列表分页偏移"),
+    topic_limit: int = Query(50, ge=1, le=500, description="主题列表每页数量"),
+    feedback_skip: int = Query(0, ge=0, description="每个主题下反馈的分页偏移"),
+    feedback_limit: int = Query(100, ge=1, le=1000, description="每个主题下反馈每页数量"),
+    db: Session = Depends(get_db),
+):
+    base_filter = [Feedback.status == FeedbackStatus.PENDING]
+    if created_from:
+        base_filter.append(Feedback.created_at >= created_from)
+    if created_to:
+        base_filter.append(Feedback.created_at <= created_to)
+
+    topics = db.query(Topic).order_by(Topic.id.asc()).offset(topic_skip).limit(topic_limit).all()
     result = []
     for topic in topics:
         feedbacks = (
             db.query(Feedback)
-            .filter(Feedback.status == "pending", Feedback.topic_id == topic.id)
+            .filter(*base_filter, Feedback.topic_id == topic.id)
             .order_by(Feedback.created_at.asc())
+            .offset(feedback_skip)
+            .limit(feedback_limit)
             .all()
         )
-        if feedbacks:
+        total_count = db.query(Feedback).filter(*base_filter, Feedback.topic_id == topic.id).count()
+        if feedbacks or total_count > 0:
             result.append(
                 FeedbackGroupByTopic(
                     topic=TopicOut.model_validate(topic),
                     feedbacks=[FeedbackListItem.model_validate(f) for f in feedbacks],
+                    feedback_count=total_count,
                 )
             )
     ungrouped = (
         db.query(Feedback)
-        .filter(Feedback.status == "pending", Feedback.topic_id.is_(None))
+        .filter(*base_filter, Feedback.topic_id.is_(None))
         .order_by(Feedback.created_at.asc())
+        .offset(feedback_skip)
+        .limit(feedback_limit)
         .all()
     )
-    if ungrouped:
+    ungrouped_total = db.query(Feedback).filter(*base_filter, Feedback.topic_id.is_(None)).count()
+    if ungrouped or ungrouped_total > 0:
         result.append(
             FeedbackGroupByTopic(
                 topic=None,
                 feedbacks=[FeedbackListItem.model_validate(f) for f in ungrouped],
+                feedback_count=ungrouped_total,
             )
         )
     return result
