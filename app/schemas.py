@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.models import PriorityLevel, FeedbackStatus
 
@@ -51,8 +51,15 @@ class TopicOut(BaseModel):
 
 class StatusChangeCreate(BaseModel):
     new_status: FeedbackStatus
-    changed_by: Optional[str] = ""
+    changed_by: str
     remark: Optional[str] = ""
+
+    @field_validator("changed_by")
+    @classmethod
+    def changed_by_must_not_be_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("changed_by is required for status change")
+        return v
 
 
 class StatusChangeOut(BaseModel):
@@ -60,7 +67,7 @@ class StatusChangeOut(BaseModel):
     feedback_id: int
     old_status: Optional[FeedbackStatus] = None
     new_status: FeedbackStatus
-    changed_by: Optional[str] = ""
+    changed_by: str
     remark: Optional[str] = ""
     changed_at: datetime
 
@@ -86,7 +93,7 @@ class FeedbackUpdate(BaseModel):
     source: Optional[str] = None
     topic_id: Optional[int] = None
     customer_ids: Optional[List[int]] = None
-    changed_by: Optional[str] = ""
+    changed_by: Optional[str] = None
     remark: Optional[str] = ""
 
 
@@ -131,3 +138,4 @@ class FeedbackGroupByTopic(BaseModel):
 class PendingEvaluationReport(BaseModel):
     total: int
     feedbacks: List[FeedbackListItem]
+    timezone_offset: str = "+00:00"
