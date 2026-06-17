@@ -3,6 +3,13 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
+from app.auth import (
+    UserIdentity,
+    require_user,
+    require_write_user,
+    require_status_change_user,
+    require_delete_user,
+)
 from app.cache import get_cached_topic_count, invalidate_topic_count, invalidate_all_topic_counts
 from app.database import get_db
 from app.i18n import t
@@ -21,8 +28,19 @@ from app.schemas import (
 router = APIRouter(prefix="/feedbacks", tags=["feedbacks"])
 
 
+def _resolve_changed_by(data_changed_by: Optional[str], user: UserIdentity) -> str:
+    if data_changed_by and data_changed_by.strip():
+        return data_changed_by.strip()
+    return user.username or user.user_id
+
+
 @router.post("/", response_model=FeedbackOut, status_code=201)
-def create_feedback(data: FeedbackCreate, request: Request, db: Session = Depends(get_db)):
+def create_feedback(
+    data: FeedbackCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_write_user),
+):
     accept_lang = request.headers.get("accept-language")
     customer_ids = data.customer_ids or []
     if data.topic_id:
@@ -49,7 +67,7 @@ def create_feedback(data: FeedbackCreate, request: Request, db: Session = Depend
             feedback_id=feedback.id,
             old_status=FeedbackStatus.PENDING,
             new_status=data.status,
-            changed_by="system",
+            changed_by=user.username or user.user_id,
             remark="创建时指定初始状态",
         )
         db.add(initial_change)
@@ -70,6 +88,7 @@ def list_feedbacks(
     source: Optional[str] = None,
     topic_id: Optional[int] = None,
     db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_user),
 ):
     query = db.query(Feedback)
     if status:
@@ -90,6 +109,7 @@ def list_feedbacks_grouped_by_topic(
     feedback_skip: int = Query(0, ge=0, description="每个主题下反馈的分页偏移"),
     feedback_limit: int = Query(100, ge=1, le=1000, description="每个主题下反馈每页数量"),
     db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_user),
 ):
     topics = db.query(Topic).order_by(Topic.id.asc()).offset(topic_skip).limit(topic_limit).all()
     result = []
@@ -138,6 +158,7 @@ def list_feedbacks_by_customer(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_user),
 ):
     accept_lang = request.headers.get("accept-language")
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
@@ -156,7 +177,12 @@ def list_feedbacks_by_customer(
 
 
 @router.get("/{feedback_id}", response_model=FeedbackOut)
-def get_feedback(feedback_id: int, request: Request, db: Session = Depends(get_db)):
+def get_feedback(
+    feedback_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_user),
+):
     accept_lang = request.headers.get("accept-language")
     feedback = (
         db.query(Feedback)
@@ -170,7 +196,13 @@ def get_feedback(feedback_id: int, request: Request, db: Session = Depends(get_d
 
 
 @router.put("/{feedback_id}", response_model=FeedbackOut)
-def update_feedback(feedback_id: int, data: FeedbackUpdate, request: Request, db: Session = Depends(get_db)):
+def update_feedback(
+    feedback_id: int,
+    data: FeedbackUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_write_user),
+):
     accept_lang = request.headers.get("accept-language")
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
     if not feedback:
@@ -186,13 +218,16 @@ def update_feedback(feedback_id: int, data: FeedbackUpdate, request: Request, db
         setattr(feedback, key, value)
 
     if "status" in update_data and old_status != update_data["status"]:
-        if not data.changed_by or not data.changed_by.strip():
-            raise HTTPException(status_code=422, detail=t("changed_by_required", accept_lang))
+        from app.auth import ALLOWED_STATUS_CHANGE_ROLES
+
+        if user.role not in ALLOWED_STATUS_CHANGE_ROLES:
+            raise HTTPException(status_code=403, detail=t("role_status_change_denied", accept_lang))
+        changed_by = _resolve_changed_by(data.changed_by, user)
         status_change = StatusChange(
             feedback_id=feedback_id,
             old_status=old_status,
             new_status=update_data["status"],
-            changed_by=data.changed_by.strip(),
+            changed_by=changed_by,
             remark=data.remark or "",
         )
         db.add(status_change)
@@ -217,7 +252,12 @@ def update_feedback(feedback_id: int, data: FeedbackUpdate, request: Request, db
 
 
 @router.delete("/{feedback_id}", status_code=204)
-def delete_feedback(feedback_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_feedback(
+    feedback_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_delete_user),
+):
     accept_lang = request.headers.get("accept-language")
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
     if not feedback:
@@ -231,7 +271,11 @@ def delete_feedback(feedback_id: int, request: Request, db: Session = Depends(ge
 
 @router.post("/{feedback_id}/status-changes", response_model=StatusChangeOut, status_code=201)
 def change_feedback_status(
-    feedback_id: int, data: StatusChangeCreate, request: Request, db: Session = Depends(get_db)
+    feedback_id: int,
+    data: StatusChangeCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_status_change_user),
 ):
     accept_lang = request.headers.get("accept-language")
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
@@ -242,7 +286,7 @@ def change_feedback_status(
         feedback_id=feedback_id,
         old_status=old_status,
         new_status=data.new_status,
-        changed_by=data.changed_by,
+        changed_by=user.username or user.user_id,
         remark=data.remark,
     )
     feedback.status = data.new_status
@@ -259,6 +303,7 @@ def list_status_changes(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    user: UserIdentity = Depends(require_user),
 ):
     accept_lang = request.headers.get("accept-language")
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
