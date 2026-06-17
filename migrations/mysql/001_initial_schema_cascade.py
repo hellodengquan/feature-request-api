@@ -103,10 +103,22 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 DOWNGRADE_SQL = """
 SET FOREIGN_KEY_CHECKS = 0;
+DROP INDEX IF EXISTS idx_status_changes_changedat ON status_changes;
+DROP INDEX IF EXISTS idx_status_changes_feedback ON status_changes;
+ALTER TABLE status_changes DROP FOREIGN KEY fk_sc_feedback;
 DROP TABLE IF EXISTS status_changes;
+DROP INDEX IF EXISTS idx_fc_customer ON feedback_customer;
+ALTER TABLE feedback_customer DROP FOREIGN KEY fk_fc_customer;
+ALTER TABLE feedback_customer DROP FOREIGN KEY fk_fc_feedback;
 DROP TABLE IF EXISTS feedback_customer;
+DROP INDEX IF EXISTS idx_feedbacks_created_at ON feedbacks;
+DROP INDEX IF EXISTS idx_feedbacks_priority ON feedbacks;
+DROP INDEX IF EXISTS idx_feedbacks_status ON feedbacks;
+DROP INDEX IF EXISTS idx_feedbacks_topic ON feedbacks;
+ALTER TABLE feedbacks DROP FOREIGN KEY fk_feedbacks_topic;
 DROP TABLE IF EXISTS feedbacks;
 DROP TABLE IF EXISTS topics;
+DROP INDEX IF EXISTS idx_customers_name ON customers;
 DROP TABLE IF EXISTS customers;
 SET FOREIGN_KEY_CHECKS = 1;
 """

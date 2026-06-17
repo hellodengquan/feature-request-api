@@ -116,9 +116,14 @@ def refresh_hot_topic_counts_async(top_n: int = HOT_TOPIC_LIMIT):
     import threading
 
     def _refresh():
-        db = SessionLocal()
-        r = get_redis()
+        db = None
         try:
+            db = SessionLocal()
+            r = get_redis()
+            if r is None:
+                logger.warning("Redis unavailable, skipping hot-topic warm-up")
+                return
+
             from app.models import Topic
             from sqlalchemy import func
 
@@ -169,9 +174,10 @@ def refresh_hot_topic_counts_async(top_n: int = HOT_TOPIC_LIMIT):
             pipe.execute()
             logger.info("Hot-topic warm-up completed, top-%d topics cached", len(hot_ids) if hot_ids else 0)
         except Exception:
-            logger.exception("Hot-topic async warm-up failed")
+            logger.exception("Hot-topic async warm-up failed, service will continue with DB fallback")
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     thread = threading.Thread(target=_refresh, daemon=True)
     thread.start()

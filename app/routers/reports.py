@@ -15,6 +15,35 @@ from app.schemas import FeedbackListItem, PendingEvaluationReport, FeedbackGroup
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 _TZ_OFFSET_PATTERN = re.compile(r"^([+-])(\d{1,2}):?(\d{2})$")
+_GMT_PATTERN = re.compile(r"^GMT([+-])(\d{1,2})(?::?(\d{2}))?$", re.IGNORECASE)
+
+TZ_ALIAS_MAP = {
+    "asia/shanghai": "+08:00",
+    "asia/tokyo": "+09:00",
+    "asia/seoul": "+09:00",
+    "asia/singapore": "+08:00",
+    "asia/hong_kong": "+08:00",
+    "asia/taipei": "+08:00",
+    "asia/kolkata": "+05:30",
+    "asia/dubai": "+04:00",
+    "asia/bangkok": "+07:00",
+    "asia/jakarta": "+07:00",
+    "europe/london": "+00:00",
+    "europe/berlin": "+01:00",
+    "europe/paris": "+01:00",
+    "europe/moscow": "+03:00",
+    "europe/helsinki": "+02:00",
+    "america/new_york": "-05:00",
+    "america/chicago": "-06:00",
+    "america/denver": "-07:00",
+    "america/los_angeles": "-08:00",
+    "america/sao_paulo": "-03:00",
+    "pacific/auckland": "+12:00",
+    "australia/sydney": "+10:00",
+    "utc": "+00:00",
+    "etc/utc": "+00:00",
+    "etc/gmt": "+00:00",
+}
 
 
 def _format_offset(hours: int, minutes: int, sign: str = "+") -> str:
@@ -33,14 +62,39 @@ def _parse_offset_string(offset_str: str) -> Optional[timedelta]:
     return timedelta(hours=hours * sign, minutes=minutes * sign)
 
 
+def _parse_gmt_alias(gmt_str: str) -> Optional[timedelta]:
+    m = _GMT_PATTERN.match(gmt_str.strip())
+    if not m:
+        return None
+    sign = 1 if m.group(1) == "+" else -1
+    hours = int(m.group(2))
+    minutes = int(m.group(3)) if m.group(3) else 0
+    if hours > 14 or minutes > 59:
+        return None
+    return timedelta(hours=hours * sign, minutes=minutes * sign)
+
+
 def _resolve_timezone_offset(x_timezone: Optional[str]) -> str:
     if x_timezone:
-        offset = _parse_offset_string(x_timezone)
+        tz_input = x_timezone.strip()
+
+        offset = _parse_offset_string(tz_input)
         if offset is not None:
             total_seconds = int(offset.total_seconds())
             sign = "+" if total_seconds >= 0 else "-"
             abs_secs = abs(total_seconds)
             return _format_offset(abs_secs // 3600, (abs_secs % 3600) // 60, sign)
+
+        offset = _parse_gmt_alias(tz_input)
+        if offset is not None:
+            total_seconds = int(offset.total_seconds())
+            sign = "+" if total_seconds >= 0 else "-"
+            abs_secs = abs(total_seconds)
+            return _format_offset(abs_secs // 3600, (abs_secs % 3600) // 60, sign)
+
+        alias_offset = TZ_ALIAS_MAP.get(tz_input.lower())
+        if alias_offset:
+            return alias_offset
 
     now = datetime.now(timezone.utc)
     local_now = datetime.now()
@@ -70,7 +124,7 @@ def pending_evaluation_report(
     limit: int = Query(200, ge=1, le=2000, description="每页数量"),
     x_timezone: Optional[str] = Header(
         None,
-        description="客户端时区偏移，格式 +HH:MM 或 -HH:MM，如 +08:00、-05:00、+0900",
+        description="客户端时区偏移，格式 +HH:MM / GMT+8 / Asia/Shanghai 等",
     ),
     db: Session = Depends(get_db),
     _user: UserIdentity = Depends(require_user),
@@ -110,7 +164,7 @@ def pending_evaluation_grouped_by_topic(
     feedback_limit: int = Query(100, ge=1, le=1000, description="每个主题下反馈每页数量"),
     x_timezone: Optional[str] = Header(
         None,
-        description="客户端时区偏移，格式 +HH:MM 或 -HH:MM",
+        description="客户端时区偏移，格式 +HH:MM / GMT+8 / Asia/Shanghai 等",
     ),
     db: Session = Depends(get_db),
     _user: UserIdentity = Depends(require_user),
